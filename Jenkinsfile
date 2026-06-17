@@ -35,7 +35,7 @@ pipeline {
         stage('Run Tests') {
             
             steps {
-                sh "npx playwright test tests/new.spec.ts"
+                sh "npx playwright test"
             }
         }
     }
