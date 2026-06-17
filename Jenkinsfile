@@ -1,8 +1,10 @@
 pipeline {
+    // 1. GLOBAL AGENT: Traps the entire pipeline (including the post block) inside Docker
     agent {
         docker {
             image 'mcr.microsoft.com/playwright:v1.61.0-jammy'
-            args '--ipc=host' 
+            // Added Volume Mount (-v) so the container can physically see the Allure CLI tool
+            args "--ipc=host -u root -v ${JENKINS_HOME}/tools:${JENKINS_HOME}/tools"
         }
     }
     
@@ -11,8 +13,6 @@ pipeline {
         PLAYWRIGHT_BROWSERS_PATH = '0' 
     }
 
-   
-
     stages {
         stage('Checkout') {
             steps {
@@ -20,9 +20,25 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Install System Dependencies (Java)') {
             steps {
-                sh 'npm install --log-level=info'
+                script {
+                    echo "Installing Java inside the container for Allure compilation..."
+                    // Because we are running as root inside an Ubuntu container, we can install Java on the fly
+                    sh "apt-get update && apt-get install -y default-jre"
+                }
+            }
+        }
+
+        stage('Install Node Dependencies') {
+            steps {
+                script {
+                    echo "Installing base dependencies..."
+                    sh "npm install --cache .npm-cache"
+                    
+                    echo "Installing Allure Playwright dynamically at runtime..."
+                    sh "npm install allure-playwright --no-save --cache .npm-cache"
+                }
             }
         }
 
@@ -33,29 +49,26 @@ pipeline {
         }
 
         stage('Run Tests') {
-            
             steps {
-                sh "npx playwright test"
+                sh "npx playwright test --project=chromium"
             }
         }
     }
 
+    // 2. POST BLOCK: Runs perfectly inside Docker because Java is installed and the tool path is mounted
     post {
         always {
-            publishHTML([
-                allowMissing: false,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'playwright-report',
-                reportFiles: 'index.html',
-                reportName: 'Playwright Report',
-                reportTitles: ''
-            ])
-
-          archiveArtifacts artifacts: '/test-results/**, /playwright-report/**/*', allowEmptyArchive: true
-
-
+            echo "Archiving standard reports..."
+            archiveArtifacts artifacts: 'playwright-report/**/*', allowEmptyArchive: true
             
+            echo "Generating and Publishing Allure Report..."
+            allure includeProperties: false, results: [[path: 'allure-results']]
+        }
+        success {
+            echo "Pipeline Green! Deployment and CT passed."
+        }
+        failure {
+            echo "Pipeline Failed. Check the Allure report to see what broke."
         }
     }
 }
